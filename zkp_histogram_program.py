@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 class ZKP_System:
-    def _init_(self):
+    def __init__(self):
         self.salt = os.urandom(16)
         self.proof_log = []
 
@@ -45,7 +45,7 @@ class ZKP_System:
 
 
 class PrivacyPreservingHistogram:
-    def _init_(self, zkp_system):
+    def __init__(self, zkp_system):
         self.zkp_system = zkp_system
 
     def create_histogram_original(self, data, bins):
@@ -136,5 +136,5 @@ def main():
     plot_histograms(original_hist, verified_hist, age_bins)
     print("Visualization saved as 'zkp_histograms_separate.png'")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()

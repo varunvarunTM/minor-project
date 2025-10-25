@@ -2,233 +2,139 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import hashlib
+import os
 from datetime import datetime
 
-class LightweightZKPEncryption:
-    def __init__(self, key=42):
-        self.key = key
-        self.modulus = 2**16
+class ZKP_System:
+    def _init_(self):
+        self.salt = os.urandom(16)
         self.proof_log = []
 
-    def encrypt(self, value):
-        encrypted = (int(value) + self.key) % self.modulus
-        return encrypted
+    def _hash(self, data_string):
+        return hashlib.sha256(data_string.encode('utf-8') + self.salt).hexdigest() #SHA 256 hash
 
-    def decrypt(self, encrypted_value):
-        decrypted = (encrypted_value - self.key) % self.modulus
-        return decrypted
-
-    def encrypt_dataset(self, data_array):
-        return [self.encrypt(value) for value in data_array]
-
-    def decrypt_dataset(self, encrypted_array):
-        return [self.decrypt(enc_value) for enc_value in encrypted_array]
-
-    def add_encrypted(self, enc1, enc2):
-        return (enc1 + enc2) % self.modulus
-
-    def generate_zkp_proof(self, statement, secret_data):
-        data_hash = hashlib.sha256(str(secret_data).encode()).hexdigest()[:8]
-        proof = {
-            'statement': statement,
-            'proof_hash': data_hash,
+    def generate_commitment(self, secret_data): #prover commitment
+        secret_string = str(tuple(secret_data))
+        commitment_hash = self._hash(secret_string)
+        
+        commitment = {
+            'statement': "I know the secret data for a histogram.",
+            'commitment_hash': commitment_hash,
             'timestamp': datetime.now().isoformat(),
             'verified': False
         }
-        self.proof_log.append(proof)
-        return proof
+        self.proof_log.append(commitment)
+        return commitment
 
-    def verify_zkp_proof(self, proof, expected_statement):
-        if proof['statement'] == expected_statement:
-            proof['verified'] = True
+    def generate_challenge(self): #verifier challenges
+        return os.urandom(16).hex()
+
+    def generate_response(self, commitment_hash, challenge):  #prover response
+        combined_data = commitment_hash + challenge
+        response_hash = self._hash(combined_data)
+        return response_hash
+
+    def verify_proof(self, commitment, challenge, response_hash): #verifier verifies
+        expected_combined = commitment['commitment_hash'] + challenge
+        expected_response_hash = self._hash(expected_combined)
+
+        if response_hash == expected_response_hash:
+            commitment['verified'] = True
             return True
         return False
 
+
 class PrivacyPreservingHistogram:
-    def __init__(self, zkp_system):
+    def _init_(self, zkp_system):
         self.zkp_system = zkp_system
 
     def create_histogram_original(self, data, bins):
         hist, bin_edges = np.histogram(data, bins=bins)
         return hist, bin_edges
 
-    def create_histogram_encrypted(self, encrypted_data, original_data, bins):
-        proof = self.zkp_system.generate_zkp_proof(
-            "I know the true data distribution",
-            tuple(original_data)
-        )
-        verification = self.zkp_system.verify_zkp_proof(
-            proof,
-            "I know the true data distribution"
-        )
-        if verification:
-            hist, bin_edges = np.histogram(original_data, bins=bins)
-            return hist, bin_edges, proof
-        else:
-            raise ValueError("ZKP verification failed")
+    def create_histogram_with_zkp(self, original_data, bins): #Successful ZKP generates histogram
+        commitment = self.zkp_system.generate_commitment(original_data)
+        
+        challenge = self.zkp_system.generate_challenge()
+        
+        response = self.zkp_system.generate_response(commitment['commitment_hash'], challenge)
+        
+        is_verified = self.zkp_system.verify_proof(commitment, challenge, response)
 
+        if is_verified:
+            hist, bin_edges = np.histogram(original_data, bins=bins)
+            return hist, bin_edges, commitment
+        else:
+            raise ValueError("ZKP verification failed: The prover's response was incorrect.")
+            
     def compare_histograms(self, hist1, hist2):
         return np.array_equal(hist1, hist2)
 
-    def calculate_histogram_statistics(self, histogram, bin_edges):
-        total = sum(histogram)
-        bin_centers = [(bin_edges[i] + bin_edges[i+1]) / 2 for i in range(len(bin_edges)-1)]
-        weighted_mean = sum(count * center for count, center in zip(histogram, bin_centers)) / total
-        max_idx = np.argmax(histogram)
-        most_common_range = f"{bin_edges[max_idx]:.0f}-{bin_edges[max_idx+1]:.0f}"
-        return {
-            'total_count': total,
-            'weighted_mean': weighted_mean,
-            'most_common_range': most_common_range,
-            'max_frequency': histogram[max_idx]
-        }
 
-def plot_histogram_comparison(original_hist, encrypted_hist, age_bins, save_plot=True):
+
+def plot_histograms(original_hist, verified_hist, age_bins, save_plot=True):
     age_groups = [f"{int(age_bins[i])}-{int(age_bins[i+1])-1}" for i in range(len(age_bins)-1)]
     x = np.arange(len(age_groups))
-    width = 0.35
+    
+    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(18, 7))
+    fig.suptitle('Histogram Comparison: Original vs. ZKP-Verified', fontsize=16)
 
-    plt.figure(figsize=(15, 8))
-    plt.bar(x - width/2, original_hist, width, label='Original Data', alpha=0.8, color='skyblue')
-    plt.bar(x + width/2, encrypted_hist, width, label='Encrypted Data (ZKP)', alpha=0.8, color='lightcoral')
+    #Histogram for Original data
+    axes[0].bar(x, original_hist, label='Original Data', color='skyblue')
+    axes[0].set_xlabel('Age Groups')
+    axes[0].set_ylabel('Number of Patients')
+    axes[0].set_title('Histogram of Original Data')
+    axes[0].set_xticks(x)
+    axes[0].set_xticklabels(age_groups, rotation=45, ha="right")
+    axes[0].legend()
+    axes[0].grid(axis='y', linestyle='--', alpha=0.7)
 
-    plt.xlabel('Age Groups', fontsize=12)
-    plt.ylabel('Number of Patients', fontsize=12)
-    plt.title('Histogram Comparison: Original vs Encrypted Medical Data\n(Demonstrating Knowledge Preservation with ZKP)', fontsize=14)
-    plt.xticks(x, age_groups, rotation=45)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    #Histogram for ZKP verified data
+    axes[1].bar(x, verified_hist, label='ZKP-Verified Data', color='lightcoral')
+    axes[1].set_xlabel('Age Groups')
+    axes[1].set_title('Histogram of ZKP-Verified Data')
+    axes[1].set_xticks(x)
+    axes[1].set_xticklabels(age_groups, rotation=45, ha="right")
+    axes[1].legend()
+    axes[1].grid(axis='y', linestyle='--', alpha=0.7)
+    
     if save_plot:
-        plt.savefig('zkp_histogram_comparison.png', dpi=300, bbox_inches='tight')
-        print("Visualization saved as 'zkp_histogram_comparison.png'")
+        plt.savefig('zkp_histograms.png', dpi=300, bbox_inches='tight')
+        
     plt.show()
 
 def main():
-    print("=== Privacy-Preserving Medical Data Analysis with ZKP ===\n")
-    # Load your own dataset
-    print("Step 1: Loading medical_dataset.csv...")
-    medical_df = pd.read_csv('D:/USAR-AIDS/minor project/medical_dataset.csv')
-    print(f"Loaded dataset shape: {medical_df.shape}")
-    print(f"Columns: {list(medical_df.columns)}")
-    print("\nFirst 5 rows:")
-    print(medical_df.head())
+    print("=== Privacy-Preserving Analysis with Simulated ZKP Protocol ===")
+    #Load dataset
+    try:
+        medical_df = pd.read_csv('medical_dataset.csv')
+    except FileNotFoundError:
+        print("\nError: 'medical_dataset.csv' not found.")
 
-    print("\nStep 2: Initializing ZKP Encryption System...")
-    zkp_system = LightweightZKPEncryption(key=42)
+    zkp_system = ZKP_System()
     histogram_generator = PrivacyPreservingHistogram(zkp_system)
-
+    
     age_data = medical_df['age'].values
-    print(f"\nAge data statistics:")
-    print(f"Min: {age_data.min()}, Max: {age_data.max()}")
-    print(f"Mean: {age_data.mean():.2f}, Std: {age_data.std():.2f}")
-
-    print("\nStep 3: Encrypting Age Data...")
-    encrypted_age_data = zkp_system.encrypt_dataset(age_data)
-    print(f"Original ages (first 10): {age_data[:10]}")
-    print(f"Encrypted ages (first 10): {encrypted_age_data[:10]}")
-    decrypted_age_data = zkp_system.decrypt_dataset(encrypted_age_data)
-    encryption_valid = np.array_equal(age_data, decrypted_age_data)
-    print(f"Encryption/Decryption verification: {encryption_valid}")
-
-    print("\nStep 4: Creating Histograms...")
-    age_bins = np.arange(18, 95, 5)  # 5-year age groups
-    print(f"Age bins: {age_bins}")
-
+    
+    print("\nCreating histograms with ZKP verification")
+    age_bins = np.arange(18, 95, 5)
+    
     original_hist, bin_edges = histogram_generator.create_histogram_original(age_data, age_bins)
-    encrypted_hist, _, zkp_proof = histogram_generator.create_histogram_encrypted(encrypted_age_data, age_data, age_bins)
+    verified_hist, _, zkp_commitment = histogram_generator.create_histogram_with_zkp(age_data, age_bins)
+    
+    print("\nComparing histogram results")
+    histograms_identical = histogram_generator.compare_histograms(original_hist, verified_hist)
+    
+    print(f"   ZKP commitment status verified via challenge: {zkp_commitment['verified']}")
+    print(f"   Histograms are identical: {histograms_identical}")
+    
+    if histograms_identical and zkp_commitment['verified']:
+        print("\nThe ZKP-verified histogram perfectly matches the original.")
+    else:
+        print("\nThe histograms do not match or ZKP failed.")
 
-    print("\nStep 5: Comparing Histograms...")
-    histograms_identical = histogram_generator.compare_histograms(original_hist, encrypted_hist)
-    print(f"Original histogram: {original_hist}")
-    print(f"Encrypted histogram: {encrypted_hist}")
-    print(f"Histograms identical: {histograms_identical}")
-    print(f"ZKP proof verified: {zkp_proof['verified']}")
+    plot_histograms(original_hist, verified_hist, age_bins)
+    print("Visualization saved as 'zkp_histograms_separate.png'")
 
-    print("\nStep 6: Statistical Knowledge Extraction...")
-    original_stats = histogram_generator.calculate_histogram_statistics(original_hist, age_bins)
-    encrypted_stats = histogram_generator.calculate_histogram_statistics(encrypted_hist, age_bins)
-    print("\nOriginal Data Statistics:")
-    for key, value in original_stats.items():
-        print(f"  {key}: {value}")
-    print("\nEncrypted Data Statistics:")
-    for key, value in encrypted_stats.items():
-        print(f"  {key}: {value}")
-    print(f"\nKnowledge preserved: {original_stats == encrypted_stats}")
-
-    print("\nStep 7: Preparing Visualization Data...")
-    age_groups = [f"{int(age_bins[i])}-{int(age_bins[i+1])-1}" for i in range(len(age_bins)-1)]
-    visualization_data = {
-        'age_group': age_groups,
-        'original_count': original_hist,
-        'encrypted_count': encrypted_hist,
-        'difference': original_hist - encrypted_hist
-    }
-    viz_df = pd.DataFrame(visualization_data)
-    print(viz_df)
-
-    print("\nStep 8: Creating Visualization...")
-    plot_histogram_comparison(original_hist, encrypted_hist, age_bins)
-
-    print("\nStep 9: Generating Summary Report...")
-    summary_data = {
-        'Metric': [
-            'Total Patients',
-            'Dataset Dimensions',
-            'Age Range', 
-            'Mean Age (Original)',
-            'Mean Age (Encrypted)',
-            'Most Common Age Group',
-            'Histogram Bins',
-            'ZKP Proof Generated',
-            'ZKP Proof Verified',
-            'Histograms Match',
-            'Privacy Preserved',
-            'Knowledge Preserved'
-        ],
-        'Value': [
-            len(medical_df),
-            f"{medical_df.shape[0]} × {medical_df.shape[1]}",
-            f"{age_data.min()}-{age_data.max()} years",
-            f"{original_stats['weighted_mean']:.1f} years",
-            f"{encrypted_stats['weighted_mean']:.1f} years",
-            original_stats['most_common_range'],
-            len(age_bins) - 1,
-            '✓ Yes',
-            '✓ Yes' if zkp_proof['verified'] else '✗ No',
-            '✓ Yes' if histograms_identical else '✗ No',
-            '✓ Yes (ZKP + Homomorphic)',
-            '✓ Yes' if original_stats == encrypted_stats else '✗ No'
-        ]
-    }
-    summary_df = pd.DataFrame(summary_data)
-    print(summary_df.to_string(index=False))
-
-    print("\nStep 10: Saving Results...")
-    medical_df.to_csv('medical_dataset_zkp.csv', index=False)
-    viz_df.to_csv('histogram_comparison_zkp.csv', index=False)
-    summary_df.to_csv('zkp_analysis_summary.csv', index=False)
-    proof_df = pd.DataFrame(zkp_system.proof_log)
-    proof_df.to_csv('zkp_proof_log.csv', index=False)
-    print("Files saved:")
-    print("- medical_dataset_zkp.csv")
-    print("- histogram_comparison_zkp.csv")
-    print("- zkp_analysis_summary.csv")
-    print("- zkp_proof_log.csv")
-    print("- zkp_histogram_comparison.png")
-
-    return {
-        'dataset': medical_df,
-        'original_histogram': original_hist,
-        'encrypted_histogram': encrypted_hist,
-        'histograms_match': histograms_identical,
-        'zkp_proof': zkp_proof,
-        'statistics': {'original': original_stats, 'encrypted': encrypted_stats}
-    }
-
-if __name__ == "__main__":
-    results = main()
-    print(f"\n=== Program Execution Complete ===")
-    print(f"ZKP Histogram Comparison: {'SUCCESS' if results['histograms_match'] else 'FAILED'}")
-    print(f"Privacy Preservation: ENABLED")
-    print(f"Knowledge Extraction: PRESERVED")
+if _name_ == "_main_":
+    main()

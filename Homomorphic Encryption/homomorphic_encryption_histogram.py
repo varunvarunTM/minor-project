@@ -15,13 +15,10 @@ class PaillierEncryption:
     """
     
     def __init__(self, key_size=512):
-        """Initialize Paillier cryptosystem with key generation"""
         self.key_size = key_size
         self.public_key, self.private_key = self._generate_keypair()
         
     def _generate_keypair(self):
-        """Generate public and private keys for Paillier encryption"""
-
         p = self._generate_prime(self.key_size // 2)
         q = self._generate_prime(self.key_size // 2)
         
